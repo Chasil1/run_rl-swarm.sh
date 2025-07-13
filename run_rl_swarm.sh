@@ -104,20 +104,29 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
     cd modal-login
     # Check if the yarn command exists; if not, install Yarn.
 
-    # Node.js + NVM setup
-    if ! command -v node > /dev/null 2>&1; then
-        echo "Node.js not found. Installing NVM and latest Node.js..."
-        export NVM_DIR="$HOME/.nvm"
-        if [ ! -d "$NVM_DIR" ]; then
-            curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-        fi
-        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-        [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
-        nvm install node
-    else
-        echo "Node.js is already installed: $(node -v)"
+   # Node.js + NVM setup
+    echo "Initializing NVM to ensure the correct Node.js version is used..."
+    # Завжди експортуємо шлях до NVM
+    export NVM_DIR="$HOME/.nvm"
+    # Ініціалізуємо NVM, якщо він встановлений. Це додасть правильний шлях до Node.js в PATH.
+    if [ -s "$NVM_DIR/nvm.sh" ]; then
+        source "$NVM_DIR/nvm.sh"
     fi
 
+    # Тепер, після ініціалізації NVM, перевіряємо, чи доступна команда node
+    if ! command -v node > /dev/null 2>&1; then
+        echo "Node.js not found, even after loading NVM. Installing NVM and latest Node.js..."
+        # Якщо NVM не був встановлений, встановлюємо його
+    if [ ! -d "$NVM_DIR" ]; then
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+        # І знову ініціалізуємо його після встановлення
+        source "$NVM_DIR/nvm.sh"
+    fi
+    nvm install node # Встановлюємо останню версію Node.js
+    nvm use node     # І активуємо її
+else
+    echo "Node.js is available. Version: $(node -v)"
+fi
     if ! command -v yarn > /dev/null 2>&1; then
         # Detect Ubuntu (including WSL Ubuntu) and install Yarn accordingly
         if grep -qi "ubuntu" /etc/os-release 2> /dev/null || uname -r | grep -qi "microsoft"; then
