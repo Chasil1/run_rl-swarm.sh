@@ -163,7 +163,7 @@ echo_green ">> Not pushing models to Hugging Face Hub (set to 'n')"
 
 
 # Automatically set the model name
-MODEL_NAME="Gensyn/Qwen2.5-0.5B-Instruct"
+MODEL_NAME="dnotitia/Smoothie-Qwen3-1.7B"
 export MODEL_NAME
 echo_green ">> Using model: $MODEL_NAME"
 
