@@ -124,9 +124,12 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
     fi
     nvm install node # Встановлюємо останню версію Node.js
     nvm use node     # І активуємо її
+# ...
 else
     echo "Node.js is available. Version: $(node -v)"
 fi
+# Зберігаємо поточну версію Node.js у змінну
+CURRENT_NODE_VERSION=$(node -v)
     if ! command -v yarn > /dev/null 2>&1; then
         # Detect Ubuntu (including WSL Ubuntu) and install Yarn accordingly
         if grep -qi "ubuntu" /etc/os-release 2> /dev/null || uname -r | grep -qi "microsoft"; then
@@ -151,13 +154,14 @@ fi
     fi
 
         # Docker image already builds it, no need to again.
+   
     if [ -z "$DOCKER" ]; then
-        # Використовуємо прямий шлях до yarn, щоб гарантовано викликати правильну версію
-        "$NVM_DIR/versions/node/$(nvm current)/bin/yarn" install --immutable
+        # Використовуємо збережену версію Node.js для побудови правильного шляху до yarn
+        "$NVM_DIR/versions/node/$CURRENT_NODE_VERSION/bin/yarn" install --immutable
         echo "Building server"
-        "$NVM_DIR/versions/node/$(nvm current)/bin/yarn" build > "$ROOT/logs/yarn.log" 2>&1
+        "$NVM_DIR/versions/node/$CURRENT_NODE_VERSION/bin/yarn" build > "$ROOT/logs/yarn.log" 2>&1
     fi
-    "$NVM_DIR/versions/node/$(nvm current)/bin/yarn" start >> "$ROOT/logs/yarn.log" 2>&1 & # Run in background and log output
+    "$NVM_DIR/versions/node/$CURRENT_NODE_VERSION/bin/yarn" start >> "$ROOT/logs/yarn.log" 2>&1 & # Run in background and log output
 
     SERVER_PID=$!  # Store the process ID
     echo "Started server process: $SERVER_PID"
