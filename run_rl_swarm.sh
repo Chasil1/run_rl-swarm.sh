@@ -5,9 +5,6 @@ set -euo pipefail
 # General arguments
 ROOT=$PWD
 
-# GenRL Swarm version to use
-GENRL_TAG="v0.1.1"
-
 export IDENTITY_PATH
 export GENSYN_RESET_CONFIG
 export CONNECT_TO_TESTNET=true
@@ -16,15 +13,13 @@ export HF_HUB_DOWNLOAD_TIMEOUT=120  # 2 minutes
 export SWARM_CONTRACT="0xFaD7C5e93f28257429569B854151A1B8DCD404c2"
 export HUGGINGFACE_ACCESS_TOKEN="None"
 
-# Path to an RSA private key. If this path does not exist, a new key pair will be created.
-# Remove this file if you want a new PeerID.
 DEFAULT_IDENTITY_PATH="$ROOT"/swarm.pem
 IDENTITY_PATH=${IDENTITY_PATH:-$DEFAULT_IDENTITY_PATH}
 
 DOCKER=${DOCKER:-""}
 GENSYN_RESET_CONFIG=${GENSYN_RESET_CONFIG:-""}
 
-# Bit of a workaround for the non-root docker container.
+# Docker permission workaround
 if [ -n "$DOCKER" ]; then
     volumes=(
         /home/gensyn/rl_swarm/modal-login/temp-data
@@ -32,18 +27,15 @@ if [ -n "$DOCKER" ]; then
         /home/gensyn/rl_swarm/configs
         /home/gensyn/rl_swarm/logs
     )
-
     for volume in ${volumes[@]}; do
         sudo chown -R 1001:1001 $volume
     done
 fi
 
-# Will ignore any visible GPUs if set.
 CPU_ONLY=${CPU_ONLY:-""}
-
-# Set if successfully parsed from modal-login/temp-data/userData.json.
 ORG_ID=${ORG_ID:-""}
 
+# Color definitions
 GREEN_TEXT="\033[32m"
 BLUE_TEXT="\033[34m"
 RED_TEXT="\033[31m"
@@ -61,18 +53,10 @@ echo_red() {
     echo -e "$RED_TEXT$1$RESET_TEXT"
 }
 
-ROOT_DIR="$(cd $(dirname ${BASH_SOURCE[0]}) && pwd)"
-
-# Function to clean up the server process upon exit
+# Function to clean up background processes upon exit
 cleanup() {
-    echo_green ">> Shutting down trainer..."
-
-    # Remove modal credentials if they exist
-    # rm -r $ROOT_DIR/modal-login/temp-data/*.json 2> /dev/null || true
-
-    # Kill all processes belonging to this script's process group
+    echo_green ">> Shutting down..."
     kill -- -$$ || true
-
     exit 0
 }
 
@@ -85,172 +69,105 @@ trap errnotify ERR
 
 echo -e "\033[38;5;224m"
 cat << "EOF"
-    ██████  ██            ███████ ██     ██  █████  ██████  ███    ███
-    ██   ██ ██            ██      ██     ██ ██   ██ ██   ██ ████  ████
-    ██████  ██      █████ ███████ ██  █  ██ ███████ ██████  ██ ████ ██
-    ██   ██ ██                 ██ ██ ███ ██ ██   ██ ██   ██ ██  ██  ██
-    ██   ██ ███████       ███████  ███ ███  ██   ██ ██   ██ ██      ██
+    ██████  ██              ███████ ██      ██  █████  ██████  ███    ███
+    ██   ██ ██              ██      ██      ██ ██   ██ ██   ██ ████  ████
+    ██████  ██        █████ ███████ ██  █   ██ ███████ ██████  ██ ████ ██
+    ██   ██ ██                    ██ ██ ███ ██ ██   ██ ██   ██ ██  ██  ██
+    ██   ██ ███████         ███████  ███ ███  ██   ██ ██   ██ ██      ██
 
     From Gensyn
 
 EOF
 
-# Create logs directory if it doesn't exist
 mkdir -p "$ROOT/logs"
 
+# Login and Proxy Server Logic
 if [ "$CONNECT_TO_TESTNET" = true ]; then
-    # Run modal_login server.
-    echo "Please login to create an Ethereum Server Wallet"
+    echo_green ">> Preparing Modal Proxy server..."
     cd modal-login
-    # Check if the yarn command exists; if not, install Yarn.
-
-   # Node.js + NVM setup
-    echo "Initializing NVM to ensure the correct Node.js version is used..."
-    # Завжди експортуємо шлях до NVM
-    export NVM_DIR="$HOME/.nvm"
-    # Ініціалізуємо NVM, якщо він встановлений. Це додасть правильний шлях до Node.js в PATH.
-    if [ -s "$NVM_DIR/nvm.sh" ]; then
-        source "$NVM_DIR/nvm.sh"
-    fi
-
-    # Тепер, після ініціалізації NVM, перевіряємо, чи доступна команда node
+    
+    # Install dependencies if they are missing
     if ! command -v node > /dev/null 2>&1; then
-        echo "Node.js not found, even after loading NVM. Installing NVM and latest Node.js..."
-        # Якщо NVM не був встановлений, встановлюємо його
-    if [ ! -d "$NVM_DIR" ]; then
-        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-        # І знову ініціалізуємо його після встановлення
-        source "$NVM_DIR/nvm.sh"
+        echo "Node.js not found. Installing NVM and latest Node.js..."
+        export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+        nvm install node
     fi
-    nvm install node # Встановлюємо останню версію Node.js
-    nvm use node     # І активуємо її
-# ...
-else
-    echo "Node.js is available. Version: $(node -v)"
-fi
-# Зберігаємо поточну версію Node.js у змінну
-CURRENT_NODE_VERSION=$(node -v)
     if ! command -v yarn > /dev/null 2>&1; then
-        # Detect Ubuntu (including WSL Ubuntu) and install Yarn accordingly
-        if grep -qi "ubuntu" /etc/os-release 2> /dev/null || uname -r | grep -qi "microsoft"; then
-            echo "Detected Ubuntu or WSL Ubuntu. Installing Yarn via apt..."
-            curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -
-            echo "deb https://dl.yarnpkg.com/debian/ stable main" | sudo tee /etc/apt/sources.list.d/yarn.list
-            sudo apt update && sudo apt install -y yarn
-        else
-            echo "Yarn not found. Installing Yarn globally with npm (no profile edits)…"
-            # This lands in $NVM_DIR/versions/node/<ver>/bin which is already on PATH
-            npm install -g --silent yarn
-        fi
+        echo "Yarn not found. Installing..."
+        npm install -g yarn
     fi
-
-    ENV_FILE="$ROOT"/modal-login/.env
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS version
-        sed -i '' "3s/.*/SMART_CONTRACT_ADDRESS=$SWARM_CONTRACT/" "$ENV_FILE"
-    else
-        # Linux version
-        sed -i "3s/.*/SMART_CONTRACT_ADDRESS=$SWARM_CONTRACT/" "$ENV_FILE"
-    fi
-
-        # Docker image already builds it, no need to again.
-   
     if [ -z "$DOCKER" ]; then
-        # Використовуємо збережену версію Node.js для побудови правильного шляху до yarn
-        "$NVM_DIR/versions/node/$CURRENT_NODE_VERSION/bin/yarn" install --immutable
-        echo "Building server"
-        "$NVM_DIR/versions/node/$CURRENT_NODE_VERSION/bin/yarn" build > "$ROOT/logs/yarn.log" 2>&1
+            yarn install --immutable
+            yarn build > "$ROOT/logs/yarn.log" 2>&1
     fi
-    "$NVM_DIR/versions/node/$CURRENT_NODE_VERSION/bin/yarn" start >> "$ROOT/logs/yarn.log" 2>&1 & # Run in background and log output
-
-    SERVER_PID=$!  # Store the process ID
+    
+    # Always start the server in the background to fix "Connection refused" error.
+    echo_green ">> Starting Modal Proxy server in the background..."
+    yarn start >> "$ROOT/logs/yarn.log" 2>&1 &
+    SERVER_PID=$!
     echo "Started server process: $SERVER_PID"
-    sleep 5
-
-    # Try to open the URL in the default browser
-    if [ -z "$DOCKER" ]; then
-        if open http://localhost:3000 2> /dev/null; then
-            echo_green ">> Successfully opened http://localhost:3000 in your default browser."
-        else
-            echo ">> Failed to open http://localhost:3000. Please open it manually."
-        fi
-    else
-        echo_green ">> Please open http://localhost:3000 in your host browser."
-    fi
-
     cd ..
+    sleep 5 # Give server a moment to start up
 
-    echo_green ">> Waiting for modal userData.json to be created..."
-    while [ ! -f "modal-login/temp-data/userData.json" ]; do
-        sleep 5  # Wait for 5 seconds before checking again
-    done
-    echo "Found userData.json. Proceeding..."
-
-    ORG_ID=$(awk 'BEGIN { FS = "\"" } !/^[ \t]*[{}]/ { print $(NF - 1); exit }' modal-login/temp-data/userData.json)
-    echo "Your ORG_ID is set to: $ORG_ID"
-
-    # Wait until the API key is activated by the client
-    echo "Waiting for API key to become activated..."
-    while true; do
-        STATUS=$(curl -s "http://localhost:3000/api/get-api-key-status?orgId=$ORG_ID")
-        if [[ "$STATUS" == "activated" ]]; then
-            echo "API key is activated! Proceeding..."
-            break
-        else
-            echo "Waiting for API key to be activated..."
+    # Check for existing credentials or guide user through login
+    if [ -f "modal-login/temp-data/userData.json" ]; then
+        echo_green ">> Found existing login credentials."
+        ORG_ID=$(awk 'BEGIN { FS = "\"" } !/^[ \t]*[{}]/ { print $(NF - 1); exit }' modal-login/temp-data/userData.json)
+    else
+        echo_green ">> Please log in via your browser at http://localhost:3000"
+        while [ ! -f "modal-login/temp-data/userData.json" ]; do
             sleep 5
-        fi
-    done
+        done
+        echo "Found userData.json. Proceeding..."
+        ORG_ID=$(awk 'BEGIN { FS = "\"" } !/^[ \t]*[{}]/ { print $(NF - 1); exit }' modal-login/temp-data/userData.json)
+        
+        while true; do
+            STATUS=$(curl -s "http://localhost:3000/api/get-api-key-status?orgId=$ORG_ID")
+            if [[ "$STATUS" == "activated" ]]; then
+                echo "API key is activated! Proceeding..."
+                break
+            else
+                sleep 5
+            fi
+        done
+    fi
+    echo "Your ORG_ID is set to: $ORG_ID"
 fi
 
-echo_green ">> Getting requirements..."
+echo_green ">> Installing Python requirements..."
 pip install --upgrade pip
+pip install git+https://github.com/xailong-6969/genrl-swarm
+pip install reasoning-gym>=0.1.20
+pip install trl
+pip install vllm==0.7.3
+pip install bitsandbytes 
+pip install hivemind@git+https://github.com/gensyn-ai/hivemind@639c964a8019de63135a2594663b5bec8e5356dd
 
-# echo_green ">> Installing GenRL..."
-pip install gensyn-genrl==0.1.4
-pip install reasoning-gym>=0.1.20 # for reasoning gym env
-pip install trl # for grpo config, will be deprecated soon
-pip install hivemind@git+https://github.com/gensyn-ai/hivemind@639c964a8019de63135a2594663b5bec8e5356dd # We need the latest, 1.1.11 is broken
-
+# Copy default config if needed
 if [ ! -d "$ROOT/configs" ]; then
     mkdir "$ROOT/configs"
-fi  
-if [ -f "$ROOT/configs/rg-swarm.yaml" ]; then
-    # Use cmp -s for a silent comparison. If different, backup and copy.
-    if ! cmp -s "$ROOT/rgym_exp/config/rg-swarm.yaml" "$ROOT/configs/rg-swarm.yaml"; then
-        if [ -z "$GENSYN_RESET_CONFIG" ]; then
-            echo_green ">> Found differences in rg-swarm.yaml. If you would like to reset to the default, set GENSYN_RESET_CONFIG to a non-empty value."
-        else
-            echo_green ">> Found differences in rg-swarm.yaml. Backing up existing config."
-            mv "$ROOT/configs/rg-swarm.yaml" "$ROOT/configs/rg-swarm.yaml.bak"
-            cp "$ROOT/rgym_exp/config/rg-swarm.yaml" "$ROOT/configs/rg-swarm.yaml"
-        fi
-    fi
-else
-    # If the config doesn't exist, just copy it.
+fi
+if [ ! -f "$ROOT/configs/rg-swarm.yaml" ]; then
     cp "$ROOT/rgym_exp/config/rg-swarm.yaml" "$ROOT/configs/rg-swarm.yaml"
 fi
 
-if [ -n "$DOCKER" ]; then
-    # Make it easier to edit the configs on Linux systems.
-    sudo chmod -R 0777 /home/gensyn/rl_swarm/configs
-fi
+echo_green ">> Setup complete!"
 
-echo_green ">> Done!"
+# ==================================================================
+# ===== NON-INTERACTIVE BLOCK FOR HF TOKEN AND MODEL SELECTION =====
+# ==================================================================
 
-HF_TOKEN=${HF_TOKEN:-""}
-if [ -n "${HF_TOKEN}" ]; then # Check if HF_TOKEN is already set and use if so. Else set the default.
-    HUGGINGFACE_ACCESS_TOKEN=${HF_TOKEN}
-else
-    # Automatically set to not push to Hugging Face Hub
-    HUGGINGFACE_ACCESS_TOKEN="None"
-    echo_green ">> Not pushing models to Hugging Face Hub (set to 'n')"
-fi
+# Automatically set to not push to Hugging Face Hub
+HUGGINGFACE_ACCESS_TOKEN="None"
+echo_green ">> Not pushing models to Hugging Face Hub (set to 'n')"
+
 
 # Automatically set the model name
 MODEL_NAME="Gensyn/Qwen2.5-0.5B-Instruct"
 export MODEL_NAME
 echo_green ">> Using model: $MODEL_NAME"
+
+# ==================================================================
 
 echo_green ">> Good luck in the swarm!"
 echo_blue ">> And remember to star the repo on GitHub! --> https://github.com/gensyn-ai/rl-swarm"
@@ -259,4 +176,4 @@ python -m rgym_exp.runner.swarm_launcher \
     --config-path "$ROOT/rgym_exp/config" \
     --config-name "rg-swarm.yaml" 
 
-wait  # Keep script running until Ctrl+C
+wait # Keep script running until Ctrl+C
